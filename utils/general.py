@@ -567,7 +567,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
     Returns:
          detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
     """
-    if prediction.dtype is torch.float16:
+    if prediction.dtype is torch.float16:  # prediction: (1, 65856, 11)
         prediction = prediction.float()  # to FP32
 
     nc = prediction[0].shape[1] - 5  # number of classes
@@ -595,7 +595,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
-        box = xywh2xyxy(x[:, :4])
+        box = xywh2xyxy(x[:, :4])  # x: (n, 11)
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
@@ -644,6 +644,18 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
 
     return output
 
+# clw modify
+def non_max_suppression_big(prediction, conf_thres=0.1, iou_thres=0.6, classes=None, agnostic=False):
+    """Performs Non-Maximum Suppression (NMS) on inference results
+
+    Returns:
+         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+    """
+
+    ###output = [None] * prediction.shape[0]
+    boxes, scores = prediction[:, :4] , prediction[:, 4]  # boxes (offset by class), scores
+    i = torchvision.ops.boxes.nms(boxes, scores, iou_thres)
+    return prediction[i]
 
 def intersect(box_a, box_b):
 

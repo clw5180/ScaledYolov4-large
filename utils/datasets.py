@@ -151,6 +151,57 @@ class LoadImages:  # for inference
     def __len__(self):
         return self.nf  # number of files
 
+# clw added
+class LoadTileImages:  # for inference
+    def __init__(self, path):
+        p = str(Path(path))  # os-agnostic
+        p = os.path.abspath(p)  # absolute path
+        if '*' in p:
+            files = sorted(glob.glob(p))  # glob
+        elif os.path.isdir(p):
+            files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
+        elif os.path.isfile(p):
+            files = [p]  # files
+        else:
+            raise Exception('ERROR: %s does not exist' % p)
+
+        images = [x for x in files if os.path.splitext(x)[-1].lower() in img_formats]
+        ni = len(images)
+
+        self.files = images
+        self.nf = ni   # number of files
+        self.mode = 'images'
+        assert self.nf > 0, 'No images found in %s. Supported formats are:\nimages: %s' % (p, img_formats)
+
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count == self.nf:
+            raise StopIteration
+        path = self.files[self.count]
+
+        # Read image
+        self.count += 1
+        img0 = cv2.imread(path)  # BGR
+        assert img0 is not None, 'Image Not Found ' + path
+        print('image %g/%g %s: ' % (self.count, self.nf, path), end='')
+
+        # Padded resize
+        #### img = letterbox(img0, new_shape=self.img_size)[0]
+
+        # Convert
+        #img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img = img0[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img = np.ascontiguousarray(img)
+
+        # cv2.imwrite(path + '.letterbox.jpg', 255 * img.transpose((1, 2, 0))[:, :, ::-1])  # save letterbox image
+        return path, img, img0
+
+    def __len__(self):
+        return self.nf  # number of files
+
 
 class LoadWebcam:  # for inference
     def __init__(self, pipe=0, img_size=640):
