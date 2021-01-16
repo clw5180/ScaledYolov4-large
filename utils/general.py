@@ -9,10 +9,11 @@ from contextlib import contextmanager
 from copy import copy
 from pathlib import Path
 from sys import platform
-
-import cv2
-import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import cv2
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -43,12 +44,6 @@ def torch_distributed_zero_first(local_rank: int):
     yield
     if local_rank == 0:
         torch.distributed.barrier()
-
-
-def init_seeds(seed=0):
-    random.seed(seed)
-    np.random.seed(seed)
-    init_seeds(seed=seed)
 
 
 def get_latest_run(search_dir='./runs'):

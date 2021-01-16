@@ -8,11 +8,17 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+import random
+import numpy as np
 
 
 def init_seeds(seed=0):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
-
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     # Speed-reproducibility tradeoff https://pytorch.org/docs/stable/notes/randomness.html
     if seed == 0:  # slower, more reproducible
         cudnn.deterministic = True

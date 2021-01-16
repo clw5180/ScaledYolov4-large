@@ -258,7 +258,9 @@ def main():
     # divide_size = [128, 128]  # [h, w]
     # stride = [120, 120]       # [h, w]
     # max_num = 1000
-    divide_size = [896, 896]  # [h, w]
+
+    #divide_size = [640, 640]  # [h, w]
+    divide_size = [384, 384]
     overlap_ratio = 0.2
     stride = [int( divide_size[0]*(1-overlap_ratio) ), int( divide_size[1]*(1-overlap_ratio)) ]       # [h, w]
     max_num = 1000000
