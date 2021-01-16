@@ -12,7 +12,8 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.utils.data
 import yaml
-from torch.cuda import amp
+#from torch.cuda import amp
+from apex import amp  # clw modify
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -28,7 +29,6 @@ from utils.general import (
 from utils.google_utils import attempt_download
 from utils.torch_utils import init_seeds, ModelEMA, select_device, intersect_dicts
 
-
 def train(hyp, opt, device, tb_writer=None):
     print(f'Hyperparameters {hyp}')
     log_dir = Path(tb_writer.log_dir) if tb_writer else Path(opt.logdir) / 'evolve'  # logging directory
@@ -37,8 +37,7 @@ def train(hyp, opt, device, tb_writer=None):
     last = wdir + 'last.pt'
     best = wdir + 'best.pt'
     results_file = str(log_dir / 'results.txt')
-    epochs, batch_size, total_batch_size, weights, rank = \
-        opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
+    epochs, batch_size, total_batch_size, weights, rank = opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
 
     # TODO: Use DDP logging. Only the first process is allowed to log.
     # Save run settings
@@ -70,8 +69,10 @@ def train(hyp, opt, device, tb_writer=None):
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(state_dict, strict=False)  # load
         print('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
-    else:
+    else:  # darknet format
         model = Model(opt.cfg, ch=3, nc=nc).to(device)# create
+
+
         #model = model.to(memory_format=torch.channels_last)  # create
 
     # Optimizer
@@ -101,8 +102,10 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
-    lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
-    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    # lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
+    #scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=epochs, T_mult=1, eta_min=1e-6)  # clw modify
+
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # Resume
@@ -148,8 +151,8 @@ def train(hyp, opt, device, tb_writer=None):
         model = DDP(model, device_ids=[opt.local_rank], output_device=(opt.local_rank))
 
     # Trainloader
-    #dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True,
-    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=False,  # clw modify
+    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True,
+    #dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=False,  # clw modify
                                             cache=opt.cache_images, rect=opt.rect, local_rank=rank,
                                             world_size=opt.world_size)
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
@@ -192,7 +195,13 @@ def train(hyp, opt, device, tb_writer=None):
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # 'P', 'R', 'mAP', 'F1', 'val GIoU', 'val Objectness', 'val Classification'
     scheduler.last_epoch = start_epoch - 1  # do not move
-    scaler = amp.GradScaler(enabled=cuda)
+    #scaler = amp.GradScaler(enabled=cuda)
+    model, optimizer = amp.initialize(model, optimizer,  # clw modify
+                                      opt_level="O1",
+                                      keep_batchnorm_fp32=None,
+                                      # verbosity=0  # 不打印amp相关的日志
+                                      )
+
     if rank in [0, -1]:
         print('Image sizes %g train, %g test' % (imgsz, imgsz_test))
         print('Using %g dataloader workers' % dataloader.num_workers)
@@ -234,16 +243,17 @@ def train(hyp, opt, device, tb_writer=None):
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
+            # clw delete
             # Warmup
-            if ni <= nw:
-                xi = [0, nw]  # x interp
-                # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
-                accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
-                for j, x in enumerate(optimizer.param_groups):
-                    # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                    x['lr'] = np.interp(ni, xi, [0.1 if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
-                    if 'momentum' in x:
-                        x['momentum'] = np.interp(ni, xi, [0.9, hyp['momentum']])
+            # if ni <= nw:
+            #     xi = [0, nw]  # x interp
+            #     # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
+            #     accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
+            #     for j, x in enumerate(optimizer.param_groups):
+            #         # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+            #         x['lr'] = np.interp(ni, xi, [0.1 if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+            #         if 'momentum' in x:
+            #             x['momentum'] = np.interp(ni, xi, [0.9, hyp['momentum']])
 
             # Multi-scale
             if opt.multi_scale:
@@ -254,27 +264,32 @@ def train(hyp, opt, device, tb_writer=None):
                     imgs = F.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
 
             # Autocast
-            with amp.autocast(enabled=cuda):
-                # Forward                
-                pred = model(imgs)
-                print(pred[0][0, 0, 0, 0, 0])
-                #pred = model(imgs.to(memory_format=torch.channels_last))
+            # with amp.autocast(enabled=cuda):  # clw moidfy
 
-                # Loss
-                loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
-                if rank != -1:
-                    loss *= opt.world_size  # gradient averaged between devices in DDP mode
-                # if not torch.isfinite(loss):
-                #     print('WARNING: non-finite loss, ending training ', loss_items)
-                #     return results
+            # Forward
+            pred = model(imgs)
+            #print(pred[0][0, 0, 0, 0, 0])  # clw modify
+            #pred = model(imgs.to(memory_format=torch.channels_last))
+
+            # Loss
+            loss, loss_items = compute_loss(pred, targets.to(device), model)  # scaled by batch_size
+            if rank != -1:
+                loss *= opt.world_size  # gradient averaged between devices in DDP mode
+            # if not torch.isfinite(loss):
+            #     print('WARNING: non-finite loss, ending training ', loss_items)
+            #     return results
 
             # Backward
-            scaler.scale(loss).backward()
+            with amp.scale_loss(loss, optimizer) as scaled_loss:  # clw moidfy
+                scaled_loss.backward()
+            #scaler.scale(loss).backward()
 
             # Optimize
             if ni % accumulate == 0:
-                scaler.step(optimizer)  # optimizer.step
-                scaler.update()
+                #scaler.step(optimizer)  # optimizer.step
+                #scaler.update()
+                optimizer.step()  # clw moidfy
+
                 optimizer.zero_grad()
                 if ema is not None:
                     ema.update(model)

@@ -67,8 +67,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
         np.random.seed(0)
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=batch_size,
-                                             #num_workers=nw,
-                                             num_workers=0,  # clw modify
+                                             num_workers=nw,
+                                             #num_workers=0,  # clw modify
                                              sampler=train_sampler,
                                              pin_memory=True,
                                              collate_fn=LoadImagesAndLabels.collate_fn,
