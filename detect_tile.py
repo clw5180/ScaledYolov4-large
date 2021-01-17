@@ -10,12 +10,30 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
+import torchvision
+import json
 
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages, LoadTileImages
 from utils.general import (
-    check_img_size, non_max_suppression, non_max_suppression_big, apply_classifier, scale_coords, xyxy2xywh, plot_one_box, strip_optimizer)
+    check_img_size, non_max_suppression, apply_classifier, scale_coords, xyxy2xywh, plot_one_box, strip_optimizer)
 from utils.torch_utils import select_device, load_classifier, time_synchronized
+
+
+submit_result = []
+
+# clw modify
+def non_max_suppression_big(prediction, iou_thres=0.6):
+    """Performs Non-Maximum Suppression (NMS) on inference results
+
+    Returns:
+         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+    """
+
+    ###output = [None] * prediction.shape[0]
+    boxes, scores = prediction[:, :4] , prediction[:, 4]  # boxes (offset by class), scores
+    i = torchvision.ops.boxes.nms(boxes, scores, iou_thres)
+    return prediction[i]
 
 
 def detect(save_img=False):
@@ -56,11 +74,12 @@ def detect(save_img=False):
     _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
 
     preds = torch.Tensor([]).cuda()
+    step_h = int(0.8 * imgsz)
+    step_w = int(0.8 * imgsz)
     for path, img, im0s in dataset: # im0s: (h, w, c)  img: (c, h, w)
         ######################################################
         img_h, img_w = im0s.shape[:2]
-        step_h = int(0.8 * imgsz)
-        step_w = int(0.8 * imgsz)
+        img_name = path.split('/')[-1]  # clw added
 
         for start_h in range(0, img_h, step_h):  # imgsz is crop step here,
             if start_h + imgsz > img_h:                  # 如果最后剩下的不到imgsz,则step少一些,保证切的图尺寸不变
@@ -110,10 +129,18 @@ def detect(save_img=False):
         if classify:
             pred = apply_classifier(pred, modelc, img, im0s)
 
+
         # Process detections
         for i, det in enumerate(pred):  # detections per image
-            p, s, im0 = path, '', im0s
 
+            submit_result.append(
+                {'name': img_name, 'category': det[4], 'bbox': det[:4], 'score': det[5]})
+
+
+
+
+
+            p, s, im0 = path, '', im0s
             save_path = str(Path(out) / Path(p).name)
             txt_path = str(Path(out) / Path(p).stem) + ('_%g' % dataset.frame if dataset.mode == 'video' else '')
             s += '%gx%g ' % img.shape[2:]  # print string
@@ -162,6 +189,11 @@ def detect(save_img=False):
         print('Results saved to %s' % Path(out))
         if platform == 'darwin' and not opt.update:  # MacOS
             os.system('open ' + save_path)
+
+    ###
+    print(submit_result)
+    with open('result.json', 'w') as fp:
+        json.dump(submit_result, fp, indent=4, ensure_ascii=False)
 
     print('Done. (%.3fs)' % (time.time() - t0))
 
